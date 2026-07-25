@@ -41,7 +41,7 @@
  *   /web <query> — quick search from the command line
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { execSync } from "node:child_process";
@@ -68,6 +68,8 @@ interface SearchResult {
 const READER_BASE = "https://r.jina.ai/";
 const DEFAULT_NUM = 5;
 const FETCH_MAX_CHARS = 20000;
+/** Lines shown when a fetch_url result is collapsed in the TUI. */
+const FETCH_PREVIEW_LINES = 20;
 const TIMEOUT_MS = 30_000;
 const SEARXNG_SEARCH_TIMEOUT = 45_000;
 const DEFAULT_ENGINES = "google,duckduckgo,bing";
@@ -479,6 +481,27 @@ export default function webSearch(pi: ExtensionAPI) {
       const u = (args.url ?? "").trim();
       const display = u ? normalizeUrl(u) : theme.fg("toolOutput", "...");
       text.setText(theme.fg("toolTitle", theme.bold("Fetch: ")) + display);
+      return text;
+    },
+    renderResult(result, options, theme, context) {
+      const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+      const full = result.content
+        .map((c) => (c.type === "text" ? c.text : ""))
+        .join("");
+      // Expanded (or empty): show everything.
+      if (options.expanded || !full) {
+        text.setText(theme.fg("toolOutput", full));
+        return text;
+      }
+      // Collapsed: preview the first lines, with a hint to expand.
+      const lines = full.split("\n");
+      const shown = lines.slice(0, FETCH_PREVIEW_LINES);
+      const hidden = lines.length - shown.length;
+      let body = shown.map((l) => theme.fg("toolOutput", l)).join("\n");
+      if (hidden > 0) {
+        body += `${theme.fg("muted", `\n... (${hidden} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+      }
+      text.setText(body);
       return text;
     },
     async execute(_id, params) {
