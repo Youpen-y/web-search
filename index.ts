@@ -43,6 +43,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { Text } from "@earendil-works/pi-tui";
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -422,6 +423,13 @@ export default function webSearch(pi: ExtensionAPI) {
       num: Type.Optional(Type.Integer({ description: "Max number of results (default 5)", minimum: 1, maximum: 20 })),
       lang: Type.Optional(Type.String({ description: "Wikipedia language hint when falling back (e.g. 'zh', 'en'). Defaults to 'en' if omitted." })),
     }),
+    renderCall(args, theme, context) {
+      const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+      const q = (args.query ?? "").trim();
+      const display = q ? q : theme.fg("toolOutput", "...");
+      text.setText(theme.fg("toolTitle", theme.bold("Web Search: ")) + display);
+      return text;
+    },
     async execute(_id, params) {
       const query = (params.query || "").trim();
       if (!query) return errorResult("❌ Query must not be empty");
@@ -435,7 +443,7 @@ export default function webSearch(pi: ExtensionAPI) {
       }
 
       const body =
-        `🔍 "${query}" (${result.backend})\n\n` +
+        `${result.backend}\n\n` +
         formatHits(result.hits) +
         (result.note ? `\n\n💡 ${result.note}` : "");
 
@@ -466,6 +474,13 @@ export default function webSearch(pi: ExtensionAPI) {
       max_length: Type.Optional(Type.Integer({ description: "Max characters to return per chunk (default 20000)", minimum: 500, maximum: 100000 })),
       offset: Type.Optional(Type.Integer({ description: "Character offset to start reading from (for continuing long pages). Pass the `end` value returned by a previous call.", minimum: 0 })),
     }),
+    renderCall(args, theme, context) {
+      const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+      const u = (args.url ?? "").trim();
+      const display = u ? normalizeUrl(u) : theme.fg("toolOutput", "...");
+      text.setText(theme.fg("toolTitle", theme.bold("Fetch: ")) + display);
+      return text;
+    },
     async execute(_id, params) {
       const url = (params.url || "").trim();
       if (!url) return errorResult("❌ URL must not be empty");
@@ -497,7 +512,7 @@ export default function webSearch(pi: ExtensionAPI) {
       return {
         content: [{
           type: "text",
-          text: `📄 ${normalizeUrl(url)}\n\n${slice.content}${note}`,
+          text: `${slice.content}${note}`,
         }],
         details: {
           url: normalizeUrl(url),
