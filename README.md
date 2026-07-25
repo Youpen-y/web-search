@@ -106,6 +106,23 @@ searxng --help
 
 Verify detection inside the extension: run a search; the result line shows the backend, e.g. `🔍 "..." (SearXNG (local, google,duckduckgo,bing))`.
 
+### Routing SearXNG through a proxy
+
+SearXNG ignores `HTTP_PROXY` / `HTTPS_PROXY` (it builds its own `httpx` transports), so engines blocked on your network silently return 0 results. Route through a proxy by adding one to `/etc/searxng/settings.yml` (auto-detected — no env var needed):
+
+```bash
+sudo mkdir -p /etc/searxng
+sudo tee /etc/searxng/settings.yml >/dev/null <<'YAML'
+use_default_settings: true
+outgoing:
+  proxies:
+    all://:
+      - http://127.0.0.1:8080   # ← your proxy
+YAML
+```
+
+`use_default_settings: true` makes this a pure overlay on the bundled defaults. No `sudo`? Put the file anywhere and `export SEARXNG_SETTINGS_PATH` to it. The proxy restores *connectivity* only — it does not defeat anti-bot scraping (`google` CAPTCHAs, `duckduckgo` rate-limits), which is inherent to keyless scraping-based search.
+
 ---
 
 ## Installation as a pi extension
