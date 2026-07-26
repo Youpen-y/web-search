@@ -6,7 +6,7 @@ It exposes two tools and one command:
 
 | Capability | What it does | Backend |
 |---|---|---|
-| `web_search` | Find relevant links for a query (`title`, `url`, `snippet`) | Local **SearXNG** CLI → **Wikipedia** API fallback |
+| `web_search` | Find relevant links for a query (`title`, `url`, `snippet`) | Local **SearXNG** CLI + **Wikipedia** API (multi-source) |
 | `fetch_url` | Read a URL's content as clean markdown | **Jina Reader** → direct-fetch + `cheerio` fallback |
 | `/web <query>` | Quick search from the TUI command line | same as `web_search` |
 
@@ -16,7 +16,7 @@ The key idea: **search only returns links; reading the page is a separate, trivi
 
 ## Why these backends?
 
-Most public search endpoints (Google/Bing/DDG scraping, public SearXNG instances, paid search APIs) block headless clients or require keys. A **locally-running SearXNG** is the one reliable, keyless path to real web search. Jina Reader and the Wikipedia API are the keyless fallbacks that still work when SearXNG is absent.
+Most public search endpoints (Google/Bing/DDG scraping, public SearXNG instances, paid search APIs) block headless clients or require keys. A **locally-running SearXNG** is the one reliable, keyless path to real web search. Jina Reader and the Wikipedia API are keyless sources that keep working when SearXNG is absent or its engines are blocked.
 
 Everything here is **keyless by design**.
 
@@ -34,7 +34,7 @@ Everything here is **keyless by design**.
 | `num` | integer | no | `5` | Max results (1–20) |
 | `lang` | string | no | `en` | Wikipedia language hint on fallback (e.g. `zh`, `en`). Defaults to `en` if omitted. |
 
-**Backend selection:** if a SearXNG CLI is reachable, it is used for real web results; otherwise the tool falls back to the Wikipedia API (reliable, but encyclopedic coverage only). If SearXNG fails mid-call, it transparently degrades to Wikipedia and annotates the result.
+**Backend selection (multi-source):** Wikipedia is always queried; when a SearXNG CLI is reachable, real web + developer engines are queried too and the hits are merged. There is no fallback cascade — a failing source simply contributes nothing, so one going down never hides the others. With no SearXNG configured, only Wikipedia is used.
 
 ### `fetch_url`
 

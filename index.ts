@@ -10,14 +10,14 @@
  * Pi's own LLM is the reasoning layer — no second LLM / subscription needed.
  *
  * Backends (all keyless):
- *   web_search  → local SearXNG CLI if available, else Wikipedia API
+ *   web_search  → local SearXNG CLI + Wikipedia API (multi-source, merged)
  *   fetch_url   → Jina Reader (r.jina.ai), free, no API key
  *
- * Search backend selection:
- *   - If a SearXNG CLI is reachable, `web_search` shells out to it for real
- *     web results (aggregates many engines, keyless, runs locally).
- *   - Otherwise it falls back to the Wikipedia API (keyless, reliable, but
- *     encyclopedic coverage only).
+ * Search backend selection (multi-source recall, not a fallback cascade):
+ *   - `web_search` always queries the Wikipedia API AND, if a SearXNG CLI is
+ *     reachable, shells out to it for real web + developer-engine results.
+ *     Hits from every source are merged, so one failing source never hides another.
+ *   - With no SearXNG CLI configured, only Wikipedia is queried.
  *   The CLI is discovered via, in order:
  *       1. env SEARXNG_CMD   — full command prefix, e.g.
  *                              "searxng"
@@ -206,7 +206,7 @@ function searxngSearch(query: string, num: number): SearchResult {
   return { hits, backend: `SearXNG (local, ${used})` };
 }
 
-// ─── Search backend: Wikipedia (keyless fallback) ─────────────
+// ─── Search backend: Wikipedia (keyless source) ─────────────
 
 /**
  * Wikipedia Search: free, keyless, reliable. Encyclopedic / factual coverage.
@@ -233,25 +233,51 @@ async function wikiSearch(query: string, num: number, lang?: string): Promise<Se
     snippet: stripHtml(it.snippet || ""),
   }));
 
-  return {
-    hits,
-    backend: `Wikipedia (${wp})`,
-    note:
-      "Fell back to Wikipedia (encyclopedia only). For full-web search, install a local SearXNG CLI and set SEARXNG_CMD.",
-  };
+  return { hits, backend: `Wikipedia (${wp})` };
 }
 
-/** Top-level search: SearXNG CLI if available, else Wikipedia. */
-async function searchWeb(query: string, num: number, lang?: string): Promise<SearchResult> {
-  if (searxngCmd()) {
-    try {
-      return searxngSearch(query, num);
-    } catch (e: any) {
-      const fb = await wikiSearch(query, num, lang);
-      return { ...fb, note: `SearXNG failed (${e.message}); fell back to ${fb.backend}. ${fb.note || ""}` };
+/** Interleave hits from several sources (fair representation), dedup by URL, cap at num. */
+function mergeHits(sources: Hit[][], num: number): Hit[] {
+  const seen = new Set<string>();
+  const out: Hit[] = [];
+  const maxLen = Math.max(0, ...sources.map((s) => s.length));
+  for (let i = 0; i < maxLen && out.length < num; i++) {
+    for (const s of sources) {
+      const h = s[i];
+      if (!h || !h.url) continue;
+      const key = h.url.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(h);
+      if (out.length >= num) break;
     }
   }
-  return await wikiSearch(query, num, lang);
+  return out;
+}
+
+/**
+ * Top-level search: multi-source recall. Wikipedia is always queried and, when a
+ * SearXNG CLI is reachable, so are the web + developer engines. Results are merged
+ * — there is no fallback cascade, so a failing source never hides the others. The
+ * Wikipedia fetch is started first so its network round-trip overlaps the blocking
+ * SearXNG shell-out.
+ */
+async function searchWeb(query: string, num: number, lang?: string): Promise<SearchResult> {
+  const haveSearx = !!searxngCmd();
+  const wikiP = wikiSearch(query, num, lang).catch(() => null); // start fetch first
+  let searx: SearchResult | null = null;
+  if (haveSearx) {
+    try { searx = searxngSearch(query, num); } catch { /* other sources still count */ }
+  }
+  const wiki = await wikiP;
+
+  const sources: SearchResult[] = [];
+  if (searx) sources.push(searx);
+  if (wiki) sources.push(wiki);
+  if (sources.length === 0) throw new Error("All search backends failed");
+
+  const hits = mergeHits(sources.map((s) => s.hits), num);
+  return { hits, backend: sources.map((s) => s.backend).join(" + ") };
 }
 
 // ─── Fetch backend: Jina Reader (free, no key) ────────────────
@@ -434,14 +460,14 @@ export default function webSearch(pi: ExtensionAPI) {
     label: "Web Search",
     description:
       "Search the web for a query and return a list of results (title, URL, snippet). " +
-      "Uses a local SearXNG CLI if one is available (set SEARXNG_CMD or have `searxng` on PATH); " +
-      "otherwise falls back to the Wikipedia API (free, keyless). " +
+      "Always queries the Wikipedia API (free, keyless) and, when a SearXNG CLI is available " +
+      "(set SEARXNG_CMD or have `searxng` on PATH), also real web + developer engines; results are merged. " +
       "Use this when the user asks to look something up online, find current information, or research a topic. " +
       "After finding relevant URLs, use fetch_url to read the full page content.",
-    promptSnippet: "Search the web (SearXNG) or Wikipedia for a query",
+    promptSnippet: "Search the web via SearXNG + Wikipedia",
     promptGuidelines: [
       "Use web_search when the user asks to look something up online or research a topic.",
-      "Translate the query to English before searching — the Wikipedia fallback is the English edition and engines return the best results for English queries (e.g. send '量子力学' as 'quantum mechanics').",
+      "Translate the query to English before searching — the Wikipedia source is the English edition and engines return the best results for English queries (e.g. send '量子力学' as 'quantum mechanics').",
       "web_search returns links and snippets; to read a page in full, follow up with fetch_url on the chosen URL.",
       "If no local SearXNG is configured, web_search covers Wikipedia only — tell the user and suggest installing a local SearXNG CLI (set SEARXNG_CMD) for general web search.",
     ],
