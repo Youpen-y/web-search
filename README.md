@@ -32,7 +32,7 @@ Everything here is **keyless by design**.
 |---|---|---|---|---|
 | `query` | string | yes | — | Search query |
 | `num` | integer | no | `5` | Max results (1–20) |
-| `lang` | string | no | `en` | Wikipedia language hint on fallback (e.g. `zh`, `en`). Defaults to `en` if omitted. |
+| `lang` | string | no | `en` | Wikipedia language edition (e.g. `zh`, `en`). |
 
 **Backend selection (multi-source):** Wikipedia is always queried; when a SearXNG CLI is reachable, real web + developer engines are queried too and the hits are merged. There is no fallback cascade — a failing source simply contributes nothing, so one going down never hides the others. With no SearXNG configured, only Wikipedia is used.
 
@@ -105,7 +105,7 @@ uv tool install .
 searxng --help
 ```
 
-Verify detection inside the extension: run a search; the result line shows the backend, e.g. `🔍 "..." (SearXNG (local, google,duckduckgo,bing))`.
+Verify detection: run a search; the first line names the backends, e.g. `SearXNG (local, google,duckduckgo,bing, github,stackoverflow) + Wikipedia (en)`.
 
 ### Routing SearXNG through a proxy
 
@@ -128,34 +128,19 @@ YAML
 
 ## Installation as a pi extension
 
-pi discovers this package's entry automatically (a root `index.ts` is picked up with no manifest needed), and its `cheerio` dependency is installed for you. Use the built-in package commands:
-
-### Install permanently
+pi discovers the root `index.ts` automatically (no manifest needed) and installs `cheerio` for you.
 
 ```bash
-pi install git:github.com/Youpen-y/web-search
+pi install git:github.com/Youpen-y/web-search   # install permanently
+pi -e git:github.com/Youpen-y/web-search        # try for this session only
+pi list                                          # / pi remove ...
 ```
 
-### Try without installing
+After installing (or `/reload`), the `web_search` / `fetch_url` tools and `/web` command are available.
 
-Run the extension for the current session only (installed to a temp directory, no settings change):
-
-```bash
-pi -e git:github.com/Youpen-y/web-search
-```
-
-### Manage
-
-```bash
-pi list                       # show installed packages
-pi remove git:github.com/Youpen-y/web-search
-```
-
-After installing — or running `/reload` — the `web_search` / `fetch_url` tools and the `/web` command become available.
-
-> **Manual placement (alternative):** you can also drop the directory under `~/.pi/agent/extensions/web-search/` (global) or `.pi/extensions/web-search/` (project-local) for auto-discovery; run `npm install` inside it first so `cheerio` is available.
+> **Manual placement:** drop the directory under `~/.pi/agent/extensions/web-search/` (global) or `.pi/extensions/web-search/` (project-local); run `npm install` inside first.
 >
-> **Security note:** extensions run with your full system permissions and can execute arbitrary code. Only install from sources you trust.
+> **Security:** extensions run with your full system permissions — only install from sources you trust.
 
 ---
 
@@ -167,8 +152,6 @@ After installing — or running `/reload` — the `web_search` / `fetch_url` too
 | `typebox` | `peerDependencies` | Schema builder for tool parameters. **Provided by pi at runtime** — pi injects its own bundled copy into extensions, so the extension always shares pi's instance. |
 | `@earendil-works/pi-coding-agent` | `peerDependencies` | The pi host itself; provides the `ExtensionAPI` type. |
 | `@types/node`, `typebox`, `@earendil-works/pi-coding-agent` | `devDependencies` | Local type-checking / IDE support only (not shipped at runtime). |
-
-`typebox` is intentionally a **peer** (not a regular dependency): pi forces every extension's `import { Type } from "typebox"` to resolve to pi's own copy, so declaring a private copy would be misleading.
 
 ---
 
