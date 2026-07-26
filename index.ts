@@ -25,7 +25,8 @@
  *                              "grun /data/.../searxng"
  *       2. `searxng` on PATH
  *   Optional env:
- *       SEARXNG_ENGINES  — comma list, default "google,duckduckgo,bing"
+ *       SEARXNG_ENGINES     — comma list, default "google,duckduckgo,bing"
+ *       SEARXNG_IT_ENGINES  — it-category dev engines, default "github,stackoverflow"
  *
  * Why these backends? In 2026 every major search engine (Google/Bing/DDG),
  * most public SearXNG instances, and paid search APIs (Jina Search, etc.)
@@ -73,6 +74,9 @@ const FETCH_PREVIEW_LINES = 20;
 const TIMEOUT_MS = 30_000;
 const SEARXNG_SEARCH_TIMEOUT = 45_000;
 const DEFAULT_ENGINES = "google,duckduckgo,bing";
+/** Developer engines queried via the `it` category (reliable, API-based). SearXNG filters
+ *  engines by one category per call, so these run as a second search and are merged in. */
+const DEFAULT_IT_ENGINES = "github,stackoverflow";
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -136,49 +140,70 @@ function searxngCmd(): string | null {
 }
 
 /**
- * Search via a local SearXNG CLI: `<cmd> search QUERY --format json [--engines ...]`.
+ * Search via a local SearXNG CLI: `<cmd> search QUERY --format json --engines ... --category ...`.
  * Parses SearXNG's standard JSON schema ({ results: [{ title, url, content }] }).
+ *
+ * SearXNG filters the `--engines` list by a single category per call, so general web
+ * engines and `it` (developer) engines cannot share one call. We run one search per
+ * category and merge the results.
  */
+
+/** Run one SearXNG CLI search scoped to a category; return raw results, or null on failure. */
+function searxngRun(cmd: string, query: string, engines: string, category: string): any[] | null {
+  // os.tmpdir() is portable: /tmp on Linux, the Termux tmp dir on Termux,
+  // and respects $TMPDIR when set. Suffix with category + randomness so the
+  // general and it calls never collide on the same temp file.
+  const tmpFile = `${os.tmpdir()}/pi-searxng-${category}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
+  // Write output to a temp file (NOT the execSync pipe) and bound wall-clock with
+  // `timeout`. A spawned process tree can hold the stdout pipe open; redirecting to
+  // a file guarantees execSync returns even if a grandchild lingers after a timeout.
+  const inner = `${cmd} search ${bashSingle(query)} --format json --engines ${engines} --category ${category} > ${bashSingle(tmpFile)} 2>/dev/null`;
+  const fullCmd = `timeout ${Math.floor(SEARXNG_SEARCH_TIMEOUT / 1000)} sh -c ${bashSingle(inner)}`;
+  try { run(fullCmd, SEARXNG_SEARCH_TIMEOUT + 5_000); } catch { return null; }
+  let out = "";
+  try { out = fs.readFileSync(tmpFile, "utf8"); } catch { return null; }
+  try { fs.unlinkSync(tmpFile); } catch {}
+  if (!out.trim()) return null;
+  try { return JSON.parse(out)?.results || []; } catch { return null; }
+}
+
 function searxngSearch(query: string, num: number): SearchResult {
   const cmd = searxngCmd();
   if (!cmd) throw new Error("SearXNG CLI unavailable");
 
-  const engines = process.env.SEARXNG_ENGINES || DEFAULT_ENGINES;
-  // os.tmpdir() is portable: /tmp on Linux, the Termux tmp dir on Termux,
-  // and respects $TMPDIR when set.
-  const tmpDir = os.tmpdir();
-  const tmpFile = `${tmpDir}/pi-searxng-${Date.now()}.json`;
-  // Write output to a temp file (NOT the execSync pipe) and bound wall-clock
-  // with `timeout`. A spawned process tree can hold the stdout pipe open;
-  // redirecting to a file guarantees execSync returns even if some grandchild
-  // lingers after a timeout — so the tool never hangs.
-  const inner = `${cmd} search ${bashSingle(query)} --format json --engines ${engines} > ${bashSingle(tmpFile)} 2>/dev/null`;
-  const fullCmd = `timeout ${Math.floor(SEARXNG_SEARCH_TIMEOUT / 1000)} sh -c ${bashSingle(inner)}`;
-  run(fullCmd, SEARXNG_SEARCH_TIMEOUT + 5_000);
+  const general = process.env.SEARXNG_ENGINES || DEFAULT_ENGINES;
+  const it = process.env.SEARXNG_IT_ENGINES || DEFAULT_IT_ENGINES;
+  const used = it ? `${general}, ${it}` : general;
 
-  let out = "";
-  try { out = fs.readFileSync(tmpFile, "utf8"); } catch {}
-  try { fs.unlinkSync(tmpFile); } catch {}
-  if (!out.trim()) throw new Error("SearXNG CLI produced no output (timeout or failure)");
+  // Query each category separately, then merge. A batch is null when that call
+  // failed entirely (timeout / no output); only an all-out failure throws, so the
+  // caller can fall back to Wikipedia.
+  const batches: (any[] | null)[] = [searxngRun(cmd, query, general, "general")];
+  if (it) batches.push(searxngRun(cmd, query, it, "it"));
+  const ok = batches.filter((b): b is any[] => Array.isArray(b));
+  if (ok.length === 0) throw new Error("SearXNG CLI produced no output (timeout or failure)");
 
-  let data: any;
-  try {
-    data = JSON.parse(out);
-  } catch {
-    throw new Error(`SearXNG returned non-JSON: ${out.slice(0, 200)}`);
+  // Interleave the batches so neither category buries the other, dedup by URL.
+  const seen = new Set<string>();
+  const hits: Hit[] = [];
+  const maxLen = Math.max(...ok.map((b) => b.length));
+  for (let i = 0; i < maxLen && hits.length < num; i++) {
+    for (const b of ok) {
+      const r = b[i];
+      if (!r || !r.url) continue;
+      const key = r.url.toString().trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      hits.push({
+        title: (r.title || "").toString().trim(),
+        url: r.url.toString().trim(),
+        snippet: stripHtml((r.content || r.description || "").toString()).slice(0, 300),
+      });
+      if (hits.length >= num) break;
+    }
   }
 
-  const results: any[] = data?.results || data?.data || [];
-  const hits: Hit[] = results
-    .filter((r) => r && r.url)
-    .slice(0, num)
-    .map((r): Hit => ({
-      title: (r.title || "").toString().trim(),
-      url: (r.url || "").toString().trim(),
-      snippet: stripHtml((r.content || r.description || "").toString()).slice(0, 300),
-    }));
-
-  return { hits, backend: `SearXNG (local, ${engines})` };
+  return { hits, backend: `SearXNG (local, ${used})` };
 }
 
 // ─── Search backend: Wikipedia (keyless fallback) ─────────────

@@ -75,7 +75,8 @@ The extension works out of the box (Wikipedia + Jina Reader). To enable **full w
 | Variable | Default | Description |
 |---|---|---|
 | `SEARXNG_CMD` | *(auto: `searxng` on `PATH`)* | Full command prefix to invoke the SearXNG CLI. Examples: `searxng`, `uv run searxng`, `grun /path/to/searxng`. |
-| `SEARXNG_ENGINES` | `google,duckduckgo,bing` | Comma-separated engine list passed to `searxng search --engines`. |
+| `SEARXNG_ENGINES` | `google,duckduckgo,bing` | Comma-separated engine list passed to `searxng search --engines` (general category). |
+| `SEARXNG_IT_ENGINES` | `github,stackoverflow` | Developer engines run via the `it` category as a second search and merged in. SearXNG filters engines by one category per call, so these cannot be mixed into `SEARXNG_ENGINES`. Set empty to disable. |
 
 Set these in your shell environment (e.g. `~/.bashrc`, `~/.zshrc`) or in pi's settings before launch.
 
